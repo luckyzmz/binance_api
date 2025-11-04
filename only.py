@@ -11,14 +11,14 @@ class BinanceDualModeAutoClose:
         self.exchange = ccxt.binanceusdm({
             'apiKey': self.api_key,
             'secret': self.api_secret,
-            'sandbox': True,  # 测试网模式，实盘请设为False
+            'sandbox': False,  # 测试网模式，实盘请设为False
             'options': {
                 'defaultType': 'future',
             }
         })
         
-        self.profit_threshold = 1.0  # 1U止盈阈值
-        self.check_interval = 3     # 检查间隔(秒)
+        self.profit_threshold = 0.8  # 1U止盈阈值
+        self.check_interval = 5     # 检查间隔(秒)，避免频率限制
         
         # 验证是否为双向持仓模式
         self.verify_dual_mode()
@@ -76,99 +76,106 @@ class BinanceDualModeAutoClose:
         return total_unrealized_pnl, open_positions
 
     def close_single_position_dual(self, symbol, contracts, position_side):
-        """双向模式下平仓单个持仓 - 修复版"""
+        """双向模式下平仓单个持仓 - 完全修复版"""
         close_side = 'sell' if position_side == 'LONG' else 'buy'
         close_amount = abs(contracts)
         
-        print(f"平仓 {symbol} {position_side}: {close_amount}张")
+        # 修复符号问题：移除/USDT:USDT，只保留基础符号
+        clean_symbol = symbol.replace('/USDT:USDT', '').replace(':USDT', '') + '/USDT'
         
+        print(f"尝试平仓 {clean_symbol} {position_side}: {close_amount}张")
+        
+        # 方法1：最简单的平仓，不使用reduceOnly
         try:
-            # 方法1：使用正确的reduceOnly参数格式
+            print("方法1: 简单平仓（不使用reduceOnly）")
             order = self.exchange.create_order(
-                symbol=symbol,
+                symbol=clean_symbol,
                 type='market',
                 side=close_side,
                 amount=close_amount,
                 params={
-                    'reduceOnly': True,  # 使用布尔值而不是字符串
                     'positionSide': position_side
+                    # 不包含reduceOnly
                 }
             )
-            print(f"✅ {symbol} {position_side} 平仓成功")
+            print(f"✅ {clean_symbol} {position_side} 平仓成功")
             return True
             
         except Exception as e:
-            print(f"❌ 方法1平仓失败 {symbol} {position_side}: {e}")
+            print(f"❌ 方法1失败: {e}")
             
-            # 方法2：尝试不使用reduceOnly参数
+            # 方法2：使用正确的符号格式
             try:
-                print(f"尝试方法2：不使用reduceOnly参数")
+                print("方法2: 使用原始符号")
                 order = self.exchange.create_order(
-                    symbol=symbol,
+                    symbol=symbol,  # 使用原始符号
                     type='market',
                     side=close_side,
                     amount=close_amount,
                     params={
                         'positionSide': position_side
-                        # 移除reduceOnly参数
                     }
                 )
-                print(f"✅ {symbol} {position_side} 平仓成功（方法2）")
+                print(f"✅ {symbol} {position_side} 平仓成功")
                 return True
                 
             except Exception as e2:
-                print(f"❌ 方法2平仓失败 {symbol} {position_side}: {e2}")
+                print(f"❌ 方法2失败: {e2}")
                 
-                # 方法3：使用备选API端点
-                return self.alternative_close_dual(symbol, close_amount, position_side, close_side)
+                # 方法3：使用币安原生API
+                return self.use_native_api(symbol, close_amount, position_side, close_side)
 
-    def alternative_close_dual(self, symbol, amount, position_side, close_side):
-        """双向持仓模式备选平仓方法 - 修复版"""
+    def use_native_api(self, symbol, amount, position_side, close_side):
+        """使用币安原生API进行平仓"""
         try:
-            print(f"尝试备选方法平仓: {symbol} {position_side}")
+            print("方法3: 使用币安原生API")
             
-            # 使用币安特定的API端点，正确的参数格式
+            # 清理符号格式
+            clean_symbol = symbol.replace('/USDT', '').replace(':USDT', '')
+            
             params = {
-                'symbol': symbol.replace('/', ''),
+                'symbol': clean_symbol,
                 'side': close_side.upper(),
                 'type': 'MARKET',
-                'quantity': amount,
+                'quantity': round(amount, 6),  # 确保精度正确
                 'positionSide': position_side,
-                # 移除reduceOnly参数或者使用正确格式
+                # 注意：原生API可能不需要reduceOnly
             }
             
             # 使用私密端点下单
             order = self.exchange.fapiPrivatePostOrder(params)
-            print(f"✅ 备选方法平仓成功: {symbol} {position_side}")
+            print(f"✅ 原生API平仓成功: {clean_symbol} {position_side}")
             return True
             
         except Exception as e:
-            print(f"❌ 备选方法也失败: {e}")
+            print(f"❌ 原生API失败: {e}")
             
-            # 最后尝试：使用不同的reduceOnly格式
-            return self.final_close_attempt(symbol, amount, position_side, close_side)
+            # 方法4：最后尝试 - 使用不同的符号格式
+            return self.final_attempt(symbol, amount, position_side, close_side)
 
-    def final_close_attempt(self, symbol, amount, position_side, close_side):
+    def final_attempt(self, symbol, amount, position_side, close_side):
         """最终平仓尝试"""
         try:
-            print(f"最终尝试平仓: {symbol} {position_side}")
+            print("方法4: 最终尝试 - 基础符号")
             
-            # 尝试使用字符串格式的reduceOnly
-            params = {
-                'symbol': symbol.replace('/', ''),
-                'side': close_side.upper(),
-                'type': 'MARKET',
-                'quantity': amount,
-                'positionSide': position_side,
-                'reduceOnly': 'true'  # 使用字符串格式
-            }
+            # 只保留基础交易对名称
+            base_symbol = symbol.split('/')[0] + 'USDT' if '/' in symbol else symbol.replace(':USDT', '')
             
-            order = self.exchange.fapiPrivatePostOrder(params)
-            print(f"✅ 最终方法平仓成功: {symbol} {position_side}")
+            order = self.exchange.create_order(
+                symbol=base_symbol + '/USDT',
+                type='market',
+                side=close_side,
+                amount=amount,
+                params={
+                    'positionSide': position_side
+                }
+            )
+            print(f"✅ 最终方法平仓成功: {base_symbol} {position_side}")
             return True
             
         except Exception as e:
-            print(f"❌ 所有平仓方法都失败: {e}")
+            print(f"❌ 所有方法都失败: {e}")
+            print("💡 建议手动在币安App中平仓")
             return False
 
     def check_and_close_individual_dual(self, positions):
@@ -189,6 +196,8 @@ class BinanceDualModeAutoClose:
                 if self.close_single_position_dual(symbol, contracts, position_side):
                     closed_any = True
                     print(f"💰 已锁定盈利: {unrealized_pnl:.2f} USDT")
+                    # 平仓后稍作停顿
+                    time.sleep(2)
         
         return closed_any
 
@@ -233,5 +242,4 @@ if __name__ == "__main__":
     
     # 创建并运行机器人
     bot = BinanceDualModeAutoClose()
-
     bot.run()
