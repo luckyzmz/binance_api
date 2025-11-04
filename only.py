@@ -228,9 +228,10 @@ class BinanceDualModeAutoClose:
 # 使用示例
 if __name__ == "__main__":
     # 设置环境变量
-    os.environ['BINANCE_API_KEY'] = '你的API_KEY'
-    os.environ['BINANCE_API_SECRET'] = '你的API_SECRET'
+    os.environ['BINANCE_API_KEY'] = 'Gvt16Ehe8TH0O4iCTuPgedpvGhZz8t5omd9mwZCGcBjEaY1mup39R1B18LP3TyYN'
+    os.environ['BINANCE_API_SECRET'] = 'OgfVjWYRTAlmAoCkvf8h3GQZFEJAHEnVNk1wzVF7NYAe0pynZuUVRXADtr8Fks6m'
     
     # 创建并运行机器人
     bot = BinanceDualModeAutoClose()
+
     bot.run()
