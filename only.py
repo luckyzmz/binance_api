@@ -76,45 +76,65 @@ class BinanceDualModeAutoClose:
         return total_unrealized_pnl, open_positions
 
     def close_single_position_dual(self, symbol, contracts, position_side):
-        """双向模式下平仓单个持仓"""
+        """双向模式下平仓单个持仓 - 修复版"""
         close_side = 'sell' if position_side == 'LONG' else 'buy'
         close_amount = abs(contracts)
         
         print(f"平仓 {symbol} {position_side}: {close_amount}张")
         
         try:
-            # 方法1：标准平仓
+            # 方法1：使用正确的reduceOnly参数格式
             order = self.exchange.create_order(
                 symbol=symbol,
                 type='market',
                 side=close_side,
                 amount=close_amount,
                 params={
-                    'reduceOnly': True,
+                    'reduceOnly': True,  # 使用布尔值而不是字符串
                     'positionSide': position_side
                 }
             )
             print(f"✅ {symbol} {position_side} 平仓成功")
             return True
-        except Exception as e:
-            print(f"❌ {symbol} {position_side} 平仓失败: {e}")
             
-            # 方法2：备选平仓方法
-            return self.alternative_close_dual(symbol, close_amount, position_side, close_side)
+        except Exception as e:
+            print(f"❌ 方法1平仓失败 {symbol} {position_side}: {e}")
+            
+            # 方法2：尝试不使用reduceOnly参数
+            try:
+                print(f"尝试方法2：不使用reduceOnly参数")
+                order = self.exchange.create_order(
+                    symbol=symbol,
+                    type='market',
+                    side=close_side,
+                    amount=close_amount,
+                    params={
+                        'positionSide': position_side
+                        # 移除reduceOnly参数
+                    }
+                )
+                print(f"✅ {symbol} {position_side} 平仓成功（方法2）")
+                return True
+                
+            except Exception as e2:
+                print(f"❌ 方法2平仓失败 {symbol} {position_side}: {e2}")
+                
+                # 方法3：使用备选API端点
+                return self.alternative_close_dual(symbol, close_amount, position_side, close_side)
 
     def alternative_close_dual(self, symbol, amount, position_side, close_side):
-        """双向持仓模式备选平仓方法"""
+        """双向持仓模式备选平仓方法 - 修复版"""
         try:
             print(f"尝试备选方法平仓: {symbol} {position_side}")
             
-            # 使用币安特定的API端点
+            # 使用币安特定的API端点，正确的参数格式
             params = {
                 'symbol': symbol.replace('/', ''),
                 'side': close_side.upper(),
                 'type': 'MARKET',
                 'quantity': amount,
                 'positionSide': position_side,
-                'reduceOnly': 'true'
+                # 移除reduceOnly参数或者使用正确格式
             }
             
             # 使用私密端点下单
@@ -124,6 +144,31 @@ class BinanceDualModeAutoClose:
             
         except Exception as e:
             print(f"❌ 备选方法也失败: {e}")
+            
+            # 最后尝试：使用不同的reduceOnly格式
+            return self.final_close_attempt(symbol, amount, position_side, close_side)
+
+    def final_close_attempt(self, symbol, amount, position_side, close_side):
+        """最终平仓尝试"""
+        try:
+            print(f"最终尝试平仓: {symbol} {position_side}")
+            
+            # 尝试使用字符串格式的reduceOnly
+            params = {
+                'symbol': symbol.replace('/', ''),
+                'side': close_side.upper(),
+                'type': 'MARKET',
+                'quantity': amount,
+                'positionSide': position_side,
+                'reduceOnly': 'true'  # 使用字符串格式
+            }
+            
+            order = self.exchange.fapiPrivatePostOrder(params)
+            print(f"✅ 最终方法平仓成功: {symbol} {position_side}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 所有平仓方法都失败: {e}")
             return False
 
     def check_and_close_individual_dual(self, positions):
