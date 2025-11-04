@@ -1,25 +1,23 @@
 import ccxt
 import time
 import os
-import json
 
 class BinanceAutoCloseFixed:
     def __init__(self):
         self.api_key = os.getenv('BINANCE_API_KEY')
         self.api_secret = os.getenv('BINANCE_API_SECRET')
         
-        # 初始化币安交易所连接 - 简化配置
+        # 初始化币安实盘连接
         self.exchange = ccxt.binance({
             'apiKey': self.api_key,
             'secret': self.api_secret,
-            'sandbox': False,  # 测试网模式
             'options': {
                 'defaultType': 'future',
             }
         })
         
-        self.profit_threshold = 0.66   # 1U止盈阈值
-        self.loss_threshold = -0.10    # 1U止损阈值
+        self.profit_threshold = 1.0   # 1U止盈阈值
+        self.loss_threshold = -0.5    # 1U止损阈值
         self.check_interval = 5       # 检查间隔
 
     def get_account_info(self):
@@ -29,7 +27,7 @@ class BinanceAutoCloseFixed:
             balance = self.exchange.fetch_balance()
             total_balance = float(balance['total']['USDT'])
             
-            # 获取持仓 - 使用正确的端点
+            # 获取持仓
             positions = self.exchange.fetch_positions()
             
             print(f"当前总余额: {total_balance:.2f} USDT")
@@ -59,7 +57,7 @@ class BinanceAutoCloseFixed:
                         'unrealized_pnl': unrealized_pnl,
                         'contracts': contracts,
                         'position_side': 'LONG',
-                        'close_side': 'SELL'
+                        'close_side': 'sell'
                     }
                 else:
                     position_info = {
@@ -67,7 +65,7 @@ class BinanceAutoCloseFixed:
                         'unrealized_pnl': unrealized_pnl,
                         'contracts': abs(contracts),
                         'position_side': 'SHORT', 
-                        'close_side': 'BUY'
+                        'close_side': 'buy'
                     }
                 
                 open_positions.append(position_info)
@@ -88,11 +86,11 @@ class BinanceAutoCloseFixed:
         print(f"🚀 尝试平仓 {symbol} {position_side}: {amount}张")
         
         try:
-            # 方法1: 使用create_order但不指定reduceOnly
+            # 方法1: 标准平仓方式
             print("尝试方法1: 标准平仓")
             order = self.exchange.create_order(
                 symbol=symbol,
-                type='MARKET',
+                type='market',
                 side=close_side,
                 amount=amount,
                 params={
@@ -106,39 +104,39 @@ class BinanceAutoCloseFixed:
             print(f"❌ 方法1失败: {e}")
             
             try:
-                # 方法2: 使用原生API调用
-                print("尝试方法2: 原生API")
-                clean_symbol = symbol.replace('/', '')
-                params = {
-                    'symbol': clean_symbol,
-                    'side': close_side,
-                    'type': 'MARKET',
-                    'quantity': amount,
-                    'positionSide': position_side
-                }
-                
-                # 使用私密端点
-                response = self.exchange.fapiPrivatePostOrder(params)
-                print(f"✅ {symbol} 平仓成功 (原生API)")
+                # 方法2: 极简方式 - 只传必要参数
+                print("尝试方法2: 极简方式")
+                order = self.exchange.create_order(
+                    symbol=symbol,
+                    type='market', 
+                    side=close_side,
+                    amount=amount
+                )
+                print(f"✅ {symbol} 平仓成功 (极简方式)")
                 return True
                 
             except Exception as e2:
                 print(f"❌ 方法2失败: {e2}")
                 
                 try:
-                    # 方法3: 极简方式 - 只传必要参数
-                    print("尝试方法3: 极简方式")
-                    order = self.exchange.create_order(
-                        symbol=symbol,
-                        type='MARKET', 
-                        side=close_side,
-                        amount=amount
-                    )
-                    print(f"✅ {symbol} 平仓成功 (极简方式)")
+                    # 方法3: 使用原生API调用
+                    print("尝试方法3: 原生API")
+                    clean_symbol = symbol.replace('/', '')
+                    params = {
+                        'symbol': clean_symbol,
+                        'side': close_side.upper(),
+                        'type': 'MARKET',
+                        'quantity': amount,
+                        'positionSide': position_side
+                    }
+                    
+                    # 使用私密端点
+                    response = self.exchange.fapiPrivatePostOrder(params)
+                    print(f"✅ {symbol} 平仓成功 (原生API)")
                     return True
                     
                 except Exception as e3:
-                    print(f"❌ 方法3失败: {e3}")
+                    print(f"❌ 所有方法都失败: {e3}")
                     return False
 
     def check_trading_conditions(self, positions):
@@ -169,11 +167,12 @@ class BinanceAutoCloseFixed:
 
     def run(self):
         """主运行循环"""
-        print("🎯 启动币安自动止盈止损机器人")
+        print("🎯 启动币安自动止盈止损机器人 - 实盘模式")
         print(f"📈 止盈阈值: +{self.profit_threshold} USDT")
         print(f"📉 止损阈值: {self.loss_threshold} USDT") 
         print(f"⏰ 检查间隔: {self.check_interval}秒")
-        print("=" * 50)
+        print("🚨 注意: 这是实盘交易，请谨慎操作！")
+        print("=" * 60)
         
         while True:
             try:
@@ -195,6 +194,8 @@ class BinanceAutoCloseFixed:
                         print(f"🎉 本次执行了 {actions} 个平仓操作")
                     else:
                         print("👀 监控中...")
+                else:
+                    print("📭 当前无持仓")
                 
                 # 等待下次检查
                 time.sleep(self.check_interval)
@@ -203,22 +204,22 @@ class BinanceAutoCloseFixed:
                 print(f"❌ 运行错误: {e}")
                 time.sleep(10)  # 出错时等待时间长一些
 
-# 测试函数 - 先验证能否获取持仓
-def test_connection():
-    """测试连接和持仓获取"""
-    print("🔍 测试连接...")
+# 实盘连接测试
+def test_real_connection():
+    """测试实盘连接"""
+    print("🔍 测试实盘连接...")
     
     exchange = ccxt.binance({
         'apiKey': os.getenv('BINANCE_API_KEY'),
         'secret': os.getenv('BINANCE_API_SECRET'),
-        'sandbox': True,
         'options': {'defaultType': 'future'},
     })
     
     try:
         # 测试获取余额
         balance = exchange.fetch_balance()
-        print(f"✅ 连接成功! 余额: {balance['total']['USDT']} USDT")
+        usdt_balance = float(balance['total']['USDT'])
+        print(f"✅ 实盘连接成功! 余额: {usdt_balance:.2f} USDT")
         
         # 测试获取持仓
         positions = exchange.fetch_positions()
@@ -229,25 +230,84 @@ def test_connection():
         for position in positions:
             contracts = float(position['contracts'])
             if contracts != 0:
-                print(f"   {position['symbol']}: {contracts} 张, 盈亏: {position['unrealizedPnl']} USDT")
+                pnl = float(position['unrealizedPnl'])
+                status = "盈利" if pnl >= 0 else "亏损"
+                print(f"   {position['symbol']}: {contracts} 张, {status} {pnl:.2f} USDT")
                 
         return True
         
     except Exception as e:
-        print(f"❌ 测试失败: {e}")
+        print(f"❌ 实盘连接失败: {e}")
         return False
+
+# 紧急手动平仓
+def emergency_close_all():
+    """紧急平仓所有持仓 - 实盘版本"""
+    print("🚨 执行紧急平仓 - 实盘！")
+    
+    exchange = ccxt.binance({
+        'apiKey': os.getenv('BINANCE_API_KEY'),
+        'secret': os.getenv('BINANCE_API_SECRET'),
+        'options': {'defaultType': 'future'},
+    })
+    
+    try:
+        positions = exchange.fetch_positions()
+        closed_count = 0
+        
+        for position in positions:
+            contracts = float(position['contracts'])
+            if contracts != 0:
+                symbol = position['symbol']
+                
+                if contracts > 0:
+                    side = 'sell'
+                    action = "平多仓"
+                else:
+                    side = 'buy'
+                    action = "平空仓"
+                
+                print(f"{action} {symbol}: {abs(contracts)}张")
+                
+                try:
+                    order = exchange.create_order(
+                        symbol=symbol,
+                        type='market',
+                        side=side,
+                        amount=abs(contracts)
+                    )
+                    print(f"✅ {symbol} 平仓成功")
+                    closed_count += 1
+                    time.sleep(0.5)  # 避免频繁请求
+                    
+                except Exception as e:
+                    print(f"❌ {symbol} 平仓失败: {e}")
+        
+        print(f"🎯 紧急平仓完成: 成功平仓 {closed_count} 个持仓")
+                    
+    except Exception as e:
+        print(f"❌ 紧急平仓失败: {e}")
 
 if __name__ == "__main__":
     # 设置环境变量
     os.environ['BINANCE_API_KEY'] = 'Gvt16Ehe8TH0O4iCTuPgedpvGhZz8t5omd9mwZCGcBjEaY1mup39R1B18LP3TyYN'
     os.environ['BINANCE_API_SECRET'] = 'OgfVjWYRTAlmAoCkvf8h3GQZFEJAHEnVNk1wzVF7NYAe0pynZuUVRXADtr8Fks6m'
     
-    print("开始测试连接...")
-    if test_connection():
-        print("\n" + "="*50)
-        print("测试通过，启动机器人...")
-        print("="*50)
-        bot = BinanceAutoCloseFixed()
-        bot.run()
+    print("开始实盘连接测试...")
+    if test_real_connection():
+        print("\n" + "="*60)
+        print("实盘测试通过，启动机器人...")
+        print("="*60)
+        
+        # 确认用户是否要继续
+        confirm = input("🚨 这是实盘交易！确认启动吗？(y/N): ")
+        if confirm.lower() == 'y':
+            bot = BinanceAutoCloseFixed()
+            bot.run()
+        else:
+            print("已取消启动")
     else:
-        print("❌ 连接测试失败，请检查API密钥和网络连接")
+        print("❌ 实盘连接测试失败，请检查:")
+        print("  1. API密钥和秘钥是否正确")
+        print("  2. 是否开启了U本位合约交易权限")
+        print("  3. 网络连接是否正常")
