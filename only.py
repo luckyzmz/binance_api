@@ -16,8 +16,8 @@ class BinanceAutoCloseFixed:
             }
         })
        
-        self.profit_threshold = 0.8  # 1U止盈阈值
-        self.loss_threshold = -0.5   # 1U止损阈值
+        self.profit_threshold = 1.0  # 1U止盈阈值
+        self.loss_threshold = -1.0   # 1U止损阈值
         self.check_interval = 5      # 检查间隔
        
         # 检查持仓模式并打印
@@ -92,41 +92,43 @@ class BinanceAutoCloseFixed:
         return total_pnl, open_positions
 
     def close_position_safely(self, position):
-        """安全平仓方法（优化版）"""
+        """安全平仓方法（优化版：修复reduceOnly在Hedge模式下的错误）"""
         symbol = position['symbol']
         amount = self.exchange.amount_to_precision(symbol, position['contracts'])  # 精度调整
         close_side = position['close_side']
         position_side = position['position_side']
-        is_hedge = self.is_hedge_mode  # 使用初始化时检查的结果；如需动态，可重新调用check_position_mode()
+        is_hedge = self.is_hedge_mode  # 使用初始化时检查的结果
 
         print(f"🚀 尝试平仓 {symbol} {position_side}: {amount}张 (模式: {'Hedge' if is_hedge else 'One-Way'})")
 
-        base_params = {
-            'reduceOnly': True,  # 强制仅减仓
-            'timeInForce': 'GTC'  # Good Till Cancelled
-        }
+        # 基础参数：根据模式调整reduceOnly
+        base_params = {'timeInForce': 'GTC'}
+        if not is_hedge:  # One-Way模式下添加reduceOnly
+            base_params['reduceOnly'] = True
 
         try:
-            # 方法1: Hedge模式专用
+            # 方法1: Hedge模式专用（无reduceOnly）
             if is_hedge:
+                params = {**base_params, 'positionSide': position_side}
                 order = self.exchange.create_order(
                     symbol=symbol,
                     type='market',
                     side=close_side,
                     amount=amount,
-                    params={**base_params, 'positionSide': position_side}
+                    params=params
                 )
                 print(f"✅ {symbol} 平仓成功 (Hedge)")
                 return True
 
-            # 方法2: One-Way/通用（无positionSide）
+            # 方法2: One-Way/通用（带reduceOnly）
             else:
+                params = base_params
                 order = self.exchange.create_order(
                     symbol=symbol,
                     type='market',
                     side=close_side,
                     amount=amount,
-                    params=base_params
+                    params=params
                 )
                 print(f"✅ {symbol} 平仓成功 (One-Way)")
                 return True
@@ -135,18 +137,21 @@ class BinanceAutoCloseFixed:
             print(f"❌ 平仓失败 (详细: {str(e)})")
            
             try:
-                # 方法3: 原生API备用（添加reduceOnly）
+                # 方法3: 原生API备用（根据模式调整参数）
                 print("尝试方法3: 原生API")
                 clean_symbol = symbol.replace('/', '')
-                params = {
-                    **base_params,
+                api_params = {
+                    **base_params,  # 包含或不包含reduceOnly
                     'symbol': clean_symbol,
                     'side': close_side.upper(),
                     'type': 'MARKET',
                     'quantity': amount,
-                    'positionSide': position_side if is_hedge else 'BOTH'
                 }
-                response = self.exchange.fapiPrivatePostOrder(params)
+                if is_hedge:
+                    api_params['positionSide'] = position_side
+                else:
+                    api_params['reduceOnly'] = '1'  # 原生API使用字符串'1'/'0'
+                response = self.exchange.fapiPrivatePostOrder(api_params)
                 print(f"✅ {symbol} 平仓成功 (原生API)")
                 return True
             except Exception as e3:
@@ -256,7 +261,7 @@ def test_real_connection():
 
 # 紧急手动平仓
 def emergency_close_all():
-    """紧急平仓所有持仓 - 实盘版本（优化）"""
+    """紧急平仓所有持仓 - 实盘版本（优化：修复reduceOnly）"""
     print("🚨 执行紧急平仓 - 实盘！")
    
     exchange = ccxt.binance({
@@ -292,7 +297,9 @@ def emergency_close_all():
                 print(f"{action} {symbol}: {amount}张")
                
                 try:
-                    params = {'reduceOnly': True}
+                    params = {'timeInForce': 'GTC'}
+                    if not is_hedge:  # One-Way下添加reduceOnly
+                        params['reduceOnly'] = True
                     if is_hedge and pos_side:
                         params['positionSide'] = pos_side
                    
